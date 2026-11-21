@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -11,7 +12,9 @@ from video_downloader import api, config, folder_picker
 
 class FolderPickerTest(unittest.TestCase):
     def test_mac_passes_path_as_argument_and_returns_selected_directory(self):
-        with tempfile.TemporaryDirectory(prefix='视频 " $ ') as directory:
+        # Windows does not allow double quotes in directory names.
+        prefix = '视频 $ ' if os.name == "nt" else '视频 " $ '
+        with tempfile.TemporaryDirectory(prefix=prefix) as directory:
             result = subprocess.CompletedProcess([], 0, directory + "/\n", "")
             with patch.object(folder_picker.sys, "platform", "darwin"), \
                     patch.object(folder_picker.subprocess, "run", return_value=result) as run:
