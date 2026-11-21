@@ -46,7 +46,9 @@ HLS 集成测试只访问临时本机 HTTP 服务，视频由 FFmpeg 合成，�
 
 安全回归测试覆盖同源和跨源资源、重定向、显式可信来源、HTTPS 降级、日志与异常信息脱敏、兼容回退保护。文件复用测试覆盖修改、清空、删除及重载索引后的行为，确认保留已有文件。
 
-主仓库的 [`.github/workflows/video-tool.yml`](../../.github/workflows/video-tool.yml) 将工作目录设为 `video-tool`，在 Linux、macOS、Windows 上执行 Python 3.10 / 3.14 的无 FFmpeg 测试，以及 Node.js 逻辑和语法检查。CI 不安装或分发 FFmpeg；完整媒体集成验证需要在配有 FFmpeg 的本地环境运行上述完整测试。工作流配置尚未在 GitHub 上运行。
+主仓库的 [`.github/workflows/video-tool.yml`](../../.github/workflows/video-tool.yml) 将工作目录设为 `video-tool`，在 Linux、macOS、Windows 上执行 Python 3.10 / 3.14 的无 FFmpeg 测试，以及 Node.js 逻辑和语法检查。CI 不安装或分发 FFmpeg；完整媒体集成验证需要在配有 FFmpeg 的本地环境运行上述完整测试。运行记录见 [GitHub Actions](https://github.com/clarence-wzy/raymond-tools/actions)，检查结果以对应提交为准。
+
+CI 的 Python 入口为 `python3 -m tests.run_ci`，只使用标准库；失败时将测试名称和堆栈写入 GitHub 检查注释，便于定位平台差异。
 
 维护、测试和上传均以 `raymond-tools` 主仓库为准，不再保留单工具发布副本或导出流程。仓库边界测试会检查本机配置、缓存和原子写入临时文件的忽略规则。
 

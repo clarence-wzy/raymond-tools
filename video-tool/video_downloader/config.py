@@ -80,8 +80,10 @@ def load() -> dict:
 
 
 def save(cfg: dict) -> None:
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    fd, temp = tempfile.mkstemp(prefix="config.", suffix=".json", dir=str(APP_DIR))
+    # Atomic replacement requires the temporary file to be on the same volume
+    # as its destination, including when tests override CONFIG_PATH.
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(prefix="config.", suffix=".json", dir=str(CONFIG_PATH.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(cfg, stream, ensure_ascii=False, indent=2)

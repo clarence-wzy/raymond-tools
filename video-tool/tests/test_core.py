@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,6 +45,18 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg["port"], 8766)
         self.assertIn("output_dir", cfg)
         self.assertFalse(cfg["keep_parts"])
+
+    def test_save_uses_the_destination_directory_and_leaves_no_temporary_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_location = root / "not-a-directory"
+            original_location.write_bytes(b"keep")
+            destination = root / "settings" / "config.json"
+            with patch.object(config, "APP_DIR", original_location), patch.object(config, "CONFIG_PATH", destination):
+                config.save({"port": 9000})
+            self.assertEqual(json.loads(destination.read_text()), {"port": 9000})
+            self.assertEqual(original_location.read_bytes(), b"keep")
+            self.assertEqual(list(destination.parent.iterdir()), [destination])
 
 
 class ProxyTest(unittest.TestCase):

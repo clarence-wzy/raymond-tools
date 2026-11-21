@@ -35,13 +35,7 @@ jobs:
         with:
           node-version: '22'
       - name: Python tests without FFmpeg
-        run: >-
-          python -m unittest -v
-          tests.test_core tests.test_retry tests.test_folder_picker
-          tests.test_security tests.test_repository
-          tests.test_download.ReliabilityTest
-          tests.test_download.QueueTest
-          tests.test_download.PlaylistTest
+        run: python -m tests.run_ci
       - name: Frontend tests
         run: node --test tests/test_web.cjs
       - name: JavaScript syntax (download page)
