@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Video Tools · 本地视频</title>
+  <link rel="icon" href="/shared/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/shared/style.css">
+  <script src="/shared/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="#video_downloader"><span class="brand-mark">VT</span><b>Video Tools</b></a>
+    <nav aria-label="工具切换">
+      <a id="nav-video_downloader" href="#video_downloader" aria-current="page">视频下载</a>
+    </nav>
+    <span class="local"><i></i>本地</span>
+  </header>
+  <main>
+    <iframe id="video_downloader" title="视频下载" data-src="/video_downloader/" allow="clipboard-read; clipboard-write" hidden></iframe>
+  </main>
+</body>
+</html>

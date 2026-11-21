@@ -1,0 +1,59 @@
+name: Video Tool Tests
+
+on:
+  push:
+    paths:
+      - 'video-tool/**'
+      - '.github/workflows/video-tool.yml'
+  pull_request:
+    paths:
+      - 'video-tool/**'
+      - '.github/workflows/video-tool.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: video-tool
+
+jobs:
+  standard-library:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.10', '3.14']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Python tests without FFmpeg
+        run: >-
+          python -m unittest -v
+          tests.test_core tests.test_retry tests.test_folder_picker
+          tests.test_security tests.test_repository
+          tests.test_download.ReliabilityTest
+          tests.test_download.QueueTest
+          tests.test_download.PlaylistTest
+      - name: Frontend tests
+        run: node --test tests/test_web.cjs
+      - name: JavaScript syntax (download page)
+        run: node --check video_downloader/web/app.js
+      - name: JavaScript syntax (shared page)
+        run: node --check shared/app.js
+      - name: Python syntax
+        run: python -m compileall -q app.py check_env.py video_downloader tests
+      - name: Shell syntax
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash -n start.sh
+          bash -n start.command
+          bash -n video_downloader/cli/resume_dl.sh

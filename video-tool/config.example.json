@@ -1,0 +1,15 @@
+{
+  "ffmpeg_path": "",
+  "output_dir": "",
+  "port": 8766,
+  "stall_timeout": 60,
+  "max_retries": 10,
+  "safety_seconds": 2.0,
+  "keep_parts": false,
+  "allow_local_input": false,
+  "max_concurrent": 2,
+  "hls_workers": 4,
+  "strict_errors": true,
+  "native_hls": true,
+  "trusted_header_origins": []
+}

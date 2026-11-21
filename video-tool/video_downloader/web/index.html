@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>视频下载</title>
+  <link rel="icon" href="/shared/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/video_downloader/style.css">
+  <script src="/video_downloader/app.js" defer></script>
+</head>
+<body>
+<main class="wrap">
+  <header class="page-head">
+    <div>
+      <h1>视频下载</h1>
+      <p class="sub">先选保存位置，再添加视频和设置文件名</p>
+    </div>
+    <a class="back" href="/" target="_top">返回工具列表</a>
+  </header>
+
+  <section class="card download-form" aria-label="新建下载">
+    <div class="section-head"><span class="step">1</span><h2>保存位置</h2></div>
+    <div class="row output-row">
+      <div class="field grow">
+        <label for="out-dir">保存目录</label>
+        <input id="out-dir" type="text" placeholder="例如 D:\videos 或 ~/Downloads">
+      </div>
+      <div class="directory-actions">
+        <button id="select-dir" class="ghost" type="button">选择文件夹</button>
+        <button id="open-dir" class="ghost" type="button">打开目录</button>
+      </div>
+    </div>
+
+    <div class="section-head"><span class="step">2</span><h2>视频与命名</h2></div>
+    <div class="field">
+      <label for="url">视频地址（m3u8 / MP4 / MPEG-TS）</label>
+      <textarea id="url" rows="3" placeholder="粘贴视频地址，每行一个&#10;支持 m3u8、MP4、MPEG-TS" spellcheck="false" aria-describedby="url-help"></textarea>
+      <p id="url-help" class="hint"><span id="url-count">0 个地址</span> · 每行一个，下方按地址顺序显示对应文件名</p>
+    </div>
+    <fieldset class="naming-options">
+      <legend>命名方式</legend>
+      <div class="naming-choices">
+        <label><input type="radio" name="naming-mode" value="auto" checked><span>自动命名</span></label>
+        <label><input type="radio" name="naming-mode" value="prefix"><span>统一前缀</span></label>
+        <label><input type="radio" name="naming-mode" value="individual"><span>逐个命名</span></label>
+      </div>
+      <p id="naming-help" class="hint">根据视频地址自动生成文件名，无需填写。</p>
+    </fieldset>
+    <div id="prefix-field" class="field" hidden>
+      <label for="filename">统一前缀</label>
+      <input id="filename" type="text" placeholder="例如：课程" autocomplete="off" aria-describedby="prefix-hint">
+      <p id="prefix-hint" class="hint">多个视频按顺序生成：课程_01.mp4、课程_02.mp4。</p>
+    </div>
+    <div id="batch-heading" class="batch-heading" hidden><span id="batch-title">文件名预览</span><span id="batch-note" class="muted">同名自动避让</span></div>
+    <div id="batch-filenames" class="batch-filenames" hidden></div>
+
+    <div class="section-head"><span class="step">3</span><h2>网络设置</h2><span class="muted">通常保持默认即可</span></div>
+    <div class="field">
+      <label for="proxy-mode">网络 / 代理</label>
+      <div class="row">
+        <select id="proxy-mode">
+          <option value="inherit">跟随环境（默认）</option>
+          <option value="direct">直连（忽略环境代理）</option>
+          <option value="custom">指定 HTTP 代理</option>
+        </select>
+      </div>
+      <div id="custom-proxy" class="custom-proxy" hidden>
+        <label for="proxy-url">HTTP 代理地址</label>
+        <div class="row">
+          <input id="proxy-url" class="grow" type="text" placeholder="http://127.0.0.1:7890" spellcheck="false" hidden aria-describedby="proxy-feedback">
+          <button id="test-proxy" class="ghost" type="button" disabled>测试连接</button>
+        </div>
+        <div class="proxy-tools">
+          <span class="muted">快捷填入</span>
+          <button class="chip" type="button" data-port="7890">Clash 7890</button>
+          <button class="chip" type="button" data-port="7897">Clash Verge 7897</button>
+        </div>
+        <p id="proxy-feedback" class="hint" role="status" aria-live="polite" hidden></p>
+      </div>
+      <div class="proxy-tools system-proxy-row">
+        <span id="system-proxy" class="muted"></span>
+        <button id="use-system-proxy" class="link" type="button" hidden>填入系统代理</button>
+      </div>
+      <p id="proxy-summary" class="summary"></p>
+      <details class="advanced proxy-help">
+        <summary>Clash / TUN 使用说明</summary>
+        <ul class="tips">
+          <li>Clash 只开“系统代理”时，ffmpeg 不会自动使用；请选“指定 HTTP 代理”并填入 Clash 的 HTTP/mixed 端口。</li>
+          <li>Clash 开 TUN 时流量会在系统层被接管，应用内无法绕过；需要在 Clash 规则里按进程或域名分流。</li>
+          <li>m3u8 的主清单和分片会分别匹配规则，可在 Clash 的 Connections 面板确认每条连接走 DIRECT 还是代理。</li>
+          <li>“测试代理”只检查本机到代理端口的连通性，不验证代理出口和 Clash 规则。</li>
+        </ul>
+      </details>
+    </div>
+
+    <details class="advanced extra-settings">
+      <summary>更多设置 <span class="muted">并发、校验、请求头</span></summary>
+      <div class="row settings-row">
+        <div class="field grow"><label for="max-concurrent">同时下载的视频数</label><select id="max-concurrent"><option value="1">1 个</option><option value="2">2 个（推荐）</option><option value="3">3 个</option><option value="4">4 个</option><option value="5">5 个</option><option value="6">6 个</option></select></div>
+        <div class="field grow"><label for="hls-workers">每个视频的分片并发</label><select id="hls-workers"><option value="1">1 路</option><option value="2">2 路</option><option value="3">3 路</option><option value="4">4 路（推荐）</option><option value="5">5 路</option><option value="6">6 路</option><option value="7">7 路</option><option value="8">8 路</option></select></div>
+      </div>
+      <label class="check"><input id="native-hls" type="checkbox" checked>优先使用 HLS 分片缓存与重试</label>
+      <label class="check"><input id="strict-errors" type="checkbox" checked>严格校验：遇到损坏数据报错</label>
+      <p class="hint">关闭严格校验允许容错处理，可能出现画面或声音损坏；仍会校验最终时长。</p>
+      <button id="save-settings" class="ghost small" type="button">保存下载设置</button>
+      <p class="hint">点击“开始下载”也会自动保存并应用这些选项。并发上限立即作用于等待队列，其余设置用于新任务。</p>
+      <label for="headers">请求头 / Cookie（可选）</label>
+      <textarea id="headers" rows="4" spellcheck="false"
+        placeholder="Cookie: session=...&#10;Referer: https://example.com/&#10;User-Agent: Mozilla/5.0 ..."></textarea>
+      <p class="hint">每行一个请求头。HLS 仅向同源及配置中的可信来源发送；跨站 CDN 需在 config.json 添加 trusted_header_origins。</p>
+      <p class="hint">携带 Cookie、Authorization、Referer 等请求头时，请保留 HLS 分片模式；无法安全兼容下载时会停止并保留缓存。</p>
+      <label class="check"><input id="restart" type="checkbox">重新开始（删除已有分段，并覆盖同名文件）</label>
+    </details>
+
+    <div class="actions">
+      <span id="submit-summary" class="muted">先添加视频地址</span>
+      <button id="start" class="primary" type="button" disabled>开始下载</button>
+    </div>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+  </section>
+
+  <section class="card">
+    <div class="tasks-head">
+      <h2>任务 <span id="task-counts" class="muted"></span></h2>
+      <div class="task-toolbar">
+        <button id="cancel-all" class="ghost small" type="button">全部取消</button>
+        <button id="clear-finished" class="ghost small" type="button">清除已完成</button>
+      </div>
+    </div>
+    <div id="task-list" class="task-list"></div>
+    <div id="task-empty" class="task-empty">还没有任务。填写地址后点“开始下载”。</div>
+  </section>
+
+  <section class="card">
+    <h2>FFmpeg</h2>
+    <div id="tool-info" class="muted">正在检测…</div>
+    <div id="tools-error" class="error" hidden></div>
+    <div class="row">
+      <input id="ffmpeg-path" class="grow" type="text"
+        placeholder="ffmpeg 可执行文件或其所在目录，留空自动查找" spellcheck="false">
+      <button id="detect" class="ghost" type="button">检测并保存</button>
+    </div>
+    <p class="hint">
+      会自动在 PATH 和常见安装位置中查找。本程序是独立目录，<strong>不要</strong>把任何文件放进 ffmpeg 安装目录。
+    </p>
+  </section>
+
+  <section class="card">
+    <details class="command-help">
+      <summary>下载原理 / 实际执行的命令</summary>
+      <p class="hint">HLS 点播优先并发获取源分片，并保留下载缓存；ffmpeg 负责解密、合并，ffprobe 校验最终时长。不支持的 HLS 清单及普通视频使用兼容流程：</p>
+      <ol class="steps">
+        <li><code>ffprobe</code> 读取总时长、起始时间和格式；</li>
+        <li>按时间片执行 <code>ffmpeg -ss ... -c copy -f mpegts</code>，每次产出一个分段；</li>
+        <li><code>ffprobe</code> 校验分段起止时间，必要时裁掉接缝重叠；</li>
+        <li>用 <code>ffmpeg -f concat -c copy</code> 把分段合并为最终文件。</li>
+      </ol>
+      <pre class="cmd">ffmpeg -hide_banner -nostdin -y -xerror -rw_timeout 15000000 \
+  -reconnect 1 -reconnect_streamed 1 \
+  -seg_max_retry 10 -max_reload 100 \
+  -stats_period 1 -progress pipe:1 -nostats \
+  -copyts -ss 0.000 -i "视频地址" \
+  -c copy -f mpegts "输出.mp4.parts/part_000.ts"</pre>
+      <p class="hint">
+        请求头、代理和 HLS 重试参数会按任务动态追加；日志里的 <code>-headers</code> 和 <code>-http_proxy</code> 值会隐藏。
+      </p>
+    </details>
+  </section>
+
+  <footer class="footer">
+    迁移到另一台电脑时，复制整个 <code>video-tools</code> 目录，按 <code>REMARK.md</code> 安装 Python 与 ffmpeg 即可。
+  </footer>
+</main>
+</body>
+</html>
