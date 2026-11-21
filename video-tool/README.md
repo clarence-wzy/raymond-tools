@@ -4,7 +4,7 @@
 
 适合批量保存你有权下载的 HLS 点播、MP4 和 MPEG-TS 视频。需要提供视频资源地址；暂不支持从普通网页自动解析视频。
 
-本工具位于 `raymond-tools/video-tool`。主仓库统一管理多个工具，入口见 [Raymond Tools](../README.md)。本地使用继续在此目录进行，现有 `config.json`、下载来源索引和缓存均保留，由 `.gitignore` 排除；无需维护另一份发布副本。
+本工具属于 [Raymond Tools](../README.md) 工具集。以下命令均在 `video-tool` 目录中执行。
 
 ## 功能
 
@@ -89,7 +89,7 @@ python3 -m video_downloader --help
 - [配置、代理和命令行](docs/CONFIGURATION.md)
 - [缓存、续传和已知限制](docs/LIMITATIONS.md)
 - [开发与测试](docs/DEVELOPMENT.md)
-- [仓库维护与发布准备](docs/RELEASING.md)
+- [维护与发布](docs/RELEASING.md)
 - [安全与隐私](SECURITY.md)
 - [参与贡献](CONTRIBUTING.md)
 
