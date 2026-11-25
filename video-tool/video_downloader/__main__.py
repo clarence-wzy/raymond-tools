@@ -18,7 +18,7 @@ def parser() -> argparse.ArgumentParser:
     cli.add_argument("output", type=Path, help="输出文件，例如 D:/videos/out.mp4")
     cli.add_argument("--headers", default="", help="按行分隔的 HTTP 请求头，例如 Cookie / Referer")
     cli.add_argument("--trusted-header-origin", action="append", default=[], help="允许接收请求头的额外来源，例如 https://cdn.example.com；可重复指定")
-    cli.add_argument("--restart", action="store_true", help="删除已有分段，从头开始")
+    cli.add_argument("--restart", action="store_true", help="删除已有分段，从头开始，成功后可覆盖输出文件")
     cli.add_argument("--keep-parts", action="store_true", help="合并成功后保留 .parts 分段")
     cli.add_argument("--safety", type=float, default=2.0, help="续传回退秒数，默认 2")
     cli.add_argument("--stall-timeout", type=float, default=60, help="无进度多少秒后重试，默认 60")

@@ -120,6 +120,32 @@ class ReliabilityTest(unittest.TestCase):
             self.assertFalse(job.cfg.output.exists())
             self.assertTrue(part.exists())
 
+    def test_file_created_during_merge_is_only_replaced_on_explicit_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for restart in (False, True):
+                with self.subTest(restart=restart):
+                    output = root / f"video-{restart}.mp4"
+                    parts = root / (output.name + ".parts")
+                    parts.mkdir()
+                    part = parts / "part.ts"
+                    part.write_bytes(b"keep")
+                    job = make_job(output, restart=restart, keep_parts=True)
+
+                    def merge(paths, export):
+                        export.write_bytes(b"download")
+                        output.write_bytes(b"another file")
+
+                    with patch.object(job, "_merge", side_effect=merge), patch.object(job, "_probe", return_value=(0, 20, "mp4")):
+                        if restart:
+                            job._finish([part], 20, parts)
+                        else:
+                            with self.assertRaisesRegex(IncompleteDownload, "输出文件已存在"):
+                                job._finish([part], 20, parts)
+                    self.assertEqual(output.read_bytes(), b"download" if restart else b"another file")
+                    self.assertEqual(part.read_bytes(), b"keep")
+                    self.assertEqual(list(root.glob("*.tmp.mp4")), [])
+
     def test_tolerance_is_opt_in(self):
         strict = make_job(Path("unused.mp4"))
         tolerant = make_job(Path("unused.mp4"), strict_errors=False)
@@ -227,9 +253,9 @@ class HlsIntegrationTest(unittest.TestCase):
         cls.thread.join()
         cls.temp.cleanup()
 
-    def run_job(self, directory, name, **kwargs):
+    def run_job(self, directory, name, *, query="", **kwargs):
         job = make_job(Path(directory) / (name + ".mp4"), keep_parts=True, headers="User-Agent: VideoToolsTest", proxy="direct", **kwargs)
-        job.cfg.url = f"http://127.0.0.1:{self.server.server_port}/{name}.m3u8"
+        job.cfg.url = f"http://127.0.0.1:{self.server.server_port}/{name}.m3u8{query}"
         job.start()
         job._thread.join(25)
         if job.is_running():
@@ -242,7 +268,8 @@ class HlsIntegrationTest(unittest.TestCase):
 
     def test_plain_download_and_checkpoint_resume(self):
         with tempfile.TemporaryDirectory() as directory:
-            self.run_job(directory, "plain")
+            first = self.run_job(directory, "plain")
+            first.cfg.output.rename(Path(directory) / "first.mp4")
             before = {key: value for key, value in self.counts.items() if key.startswith("/plain") and key.endswith(".ts")}
             self.run_job(directory, "plain")
             after = {key: value for key, value in self.counts.items() if key.startswith("/plain") and key.endswith(".ts")}
@@ -265,9 +292,21 @@ class HlsIntegrationTest(unittest.TestCase):
 
     def test_complete_cache_can_merge_without_accessing_the_source(self):
         with tempfile.TemporaryDirectory() as directory:
-            self.run_job(directory, "plain")
+            first = self.run_job(directory, "plain")
+            first.cfg.output.rename(Path(directory) / "first.mp4")
             with patch.object(hls, "download", side_effect=AssertionError("must not access the source")):
                 self.run_job(directory, "plain")
+
+    def test_renewed_hls_address_checks_playlist_and_reuses_matching_segments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = self.run_job(directory, "plain")
+            first.cfg.output.rename(Path(directory) / "first.mp4")
+            playlist = "/plain.m3u8?token=renewed"
+            fragments = [f"/plain{index:02d}.ts" for index in range(4)]
+            before = {path: self.counts[path] for path in [playlist, *fragments]}
+            self.run_job(directory, "plain", query="?token=renewed", native_hls=False)
+            self.assertEqual(self.counts[playlist], before[playlist] + 1)
+            self.assertEqual({path: self.counts[path] for path in fragments}, {path: before[path] for path in fragments})
 
     def test_failed_download_keeps_successful_peers_for_resume(self):
         with tempfile.TemporaryDirectory() as directory:

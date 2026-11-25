@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import ctypes
+import errno
 import json
 import math
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -44,6 +47,29 @@ def child_env(proxy: str) -> dict[str, str]:
 
 def proxy_args(proxy: str) -> list[str]:
     return ["-http_proxy", proxy] if proxy and proxy != "direct" else []
+
+
+def publish_without_replacing(temporary: Path, output: Path) -> None:
+    if os.name == "nt":
+        os.rename(temporary, output)
+        return
+    try:
+        os.link(temporary, output)
+    except OSError as link_error:
+        # Some volumes refuse hard links but support an exclusive rename.
+        if link_error.errno not in (errno.EACCES, errno.EPERM, errno.ENOTSUP, errno.ENOSYS):
+            raise
+        libc = ctypes.CDLL(None, use_errno=True)
+        source, target = os.fsencode(temporary), os.fsencode(output)
+        if sys.platform == "darwin" and hasattr(libc, "renamex_np"):
+            result = libc.renamex_np(source, target, 0x4)  # RENAME_EXCL
+        elif sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+            result = libc.renameat2(-100, source, -100, target, 1)  # AT_FDCWD, RENAME_NOREPLACE
+        else:
+            raise
+        if result != 0:
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code), output) from link_error
 
 
 def public_proxy(proxy: str) -> str:
@@ -232,9 +258,9 @@ class DownloadJob:
         self.started_at = time.time()
         self._set(status="probing", message="正在探测视频信息…")
         parts_dir = self.cfg.output.parent / (self.cfg.output.name + ".parts")
-        if self.cfg.native_hls and "m3u8" in self.cfg.url.lower() and not (
-            parts_dir.exists() and any(parts_dir.glob("part_*.ts")) and not self.cfg.restart
-        ):
+        native_cache = not self.cfg.restart and (parts_dir / "hls-state.json").is_file()
+        legacy_cache = not self.cfg.restart and any(parts_dir.glob("part_*.ts"))
+        if native_cache or (self.cfg.native_hls and "m3u8" in self.cfg.url.lower() and not legacy_cache):
             from .hls import UnsupportedPlaylist, cached_playlist, download
             cached = cached_playlist(self.cfg.url, parts_dir) if not self.cfg.restart else None
             if cached:
@@ -245,6 +271,8 @@ class DownloadJob:
             try:
                 playlist, total = download(self, parts_dir)
             except UnsupportedPlaylist as error:
+                if native_cache:
+                    raise IncompleteDownload(f"无法验证新清单与 HLS 缓存是否匹配，分片已保留（{error}）。") from error
                 self._log(f"使用兼容下载方式：{error}")
             else:
                 self._finish([playlist], total, parts_dir)
@@ -375,7 +403,15 @@ class DownloadJob:
             with self._lock:
                 if self._cancel.is_set():
                     raise Cancelled()
-                os.replace(temporary, out)
+                try:
+                    if self.cfg.restart:
+                        os.replace(temporary, out)
+                    else:
+                        publish_without_replacing(temporary, out)
+                except FileExistsError as error:
+                    raise IncompleteDownload("输出文件已存在，分片已保留。移走同名文件后可继续重试。") from error
+                except OSError as error:
+                    raise IncompleteDownload(f"无法发布输出，分片已保留。请检查目录权限和文件系统支持（{error}）。") from error
                 note = "（源时长未知，请检查完整性）" if total is None else ""
                 self._set(status="done", message=f"完成：{out}{note}", total_time=total or finfo[1], out_time=finfo[1], percent=100.0)
             if not self.cfg.keep_parts:

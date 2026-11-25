@@ -40,7 +40,7 @@ ENDPOINTS = {
     "/api/video_downloader/open_folder": (video.open_folder, 4096, "4 KB"),
     "/api/video_downloader/select_folder": (video.select_folder, 4096, "4 KB"),
     "/api/video_downloader/settings": (video.settings, 4096, "4 KB"),
-    "/api/video_downloader/retry": (video.retry, 4096, "4 KB"),
+    "/api/video_downloader/retry": (video.retry, 65536, "64 KB"),
     "/api/video_downloader/edit_details": (video.edit_details, 4096, "4 KB"),
 }
 

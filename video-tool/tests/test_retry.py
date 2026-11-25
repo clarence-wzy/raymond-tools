@@ -59,6 +59,55 @@ class RetryTest(unittest.TestCase):
         start.assert_not_called()
         self.assertIs(api.JOBS[old.id], old)
 
+    def test_index_failure_leaves_new_task_absent_and_original_retryable(self):
+        old = self.old_job()
+        with patch.object(api, "INDEX_PATH", self.root / "missing" / "index.json"), \
+                patch.object(DownloadJob, "start") as start:
+            result = api.start_batch({
+                "urls": ["https://example.com/new.mp4"], "out_dir": str(self.root), "include_results": True,
+            })
+            self.assertEqual(result["results"][0]["status"], "failed")
+            with self.assertRaisesRegex(ValueError, "任务索引"):
+                api.retry({"id": old.id})
+        self.assertEqual(api.JOBS, {old.id: old})
+        self.assertEqual(api.SOURCE_INDEX, {})
+        start.assert_not_called()
+
+    def test_edited_retry_keeps_task_identity_and_rejects_cross_origin_headers(self):
+        old = self.old_job()
+        with patch.object(DownloadJob, "start") as start:
+            with self.assertRaisesRegex(ValueError, "来源不同"):
+                api.retry({"id": old.id, "changes": {"url": "https://another.example/index.m3u8"}})
+            start.assert_not_called()
+            result = api.retry({
+                "id": old.id,
+                "changes": {"url": "https://example.com/index.m3u8?token=new", "proxy": ""},
+            })
+            start.assert_called_once()
+        updated = api.JOBS[old.id]
+        self.assertEqual(result["job"]["id"], old.id)
+        self.assertEqual(updated.cfg.output, old.cfg.output)
+        self.assertTrue(updated.cfg.url.endswith("token=new"))
+        self.assertEqual(updated.cfg.headers, old.cfg.headers)
+        self.assertEqual(updated.cfg.proxy, "")
+
+    def test_clear_completed_only_preserves_failed_tasks(self):
+        failed = self.old_job()
+        done = self.old_job()
+        done._set(status="done")
+        self.assertEqual(api.clear_finished({"completed_only": True})["removed"], 1)
+        self.assertEqual(api.JOBS, {failed.id: failed})
+
+    def test_single_batch_line_avoids_an_existing_explicit_name(self):
+        original = self.root / "named.mp4"
+        original.write_bytes(b"existing")
+        with patch.object(DownloadJob, "start"):
+            batch = api.start_batch({
+                "urls": ["https://example.com/video.mp4"], "out_dir": str(self.root), "filename": "named",
+            })
+        self.assertEqual(batch["results"], [{"index": 0, "status": "created", "output": "named_2.mp4"}])
+        self.assertEqual(original.read_bytes(), b"existing")
+
     def test_same_source_different_name_reuses_original_task(self):
         old = self.old_job()
         with patch.object(DownloadJob, "start"), patch.object(DownloadJob, "_log"):

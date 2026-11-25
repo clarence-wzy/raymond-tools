@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import threading
+import time
 from http.client import HTTPException
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -300,12 +301,19 @@ def download(job, directory: Path) -> tuple[Path, float]:
     try:
         futures = [pool.submit(fetch, index) for index in range(len(segments)) if str(index) not in completed]
         covered = cached_duration
+        pending = 0
+        last_saved = time.monotonic()
         for future in as_completed(futures):
             check()
             index, size = future.result()
             completed[str(index)] = size
             covered += segments[index].duration
-            save_state()
+            pending += 1
+            now = time.monotonic()
+            if pending >= 32 or now - last_saved >= 1:
+                save_state()
+                pending = 0
+                last_saved = now
             job._set(out_time=covered, percent=min(99, covered / total * 100), part=len(completed), message=f"HLS 分片下载：{len(completed)}/{len(segments)}")
     finally:
         stop.set()

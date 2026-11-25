@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from . import config, folder_picker, system_proxy
 from .core import DownloadJob, JobConfig
 from .locator import ToolNotFound, Tools, find
-from .network import validate_proxy
+from .network import origin, validate_proxy
 from .scheduler import SCHEDULER
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,12 +53,13 @@ def _remember(job: DownloadJob) -> None:
         if job.progress.status == "done" and job.cfg.output.is_file():
             stat = job.cfg.output.stat()
             entry.update(size=stat.st_size, mtime_ns=stat.st_mtime_ns, duration=job.progress.total_time)
-        SOURCE_INDEX[_source_key(job.cfg.url, job.cfg.output.parent)] = entry
+        key = _source_key(job.cfg.url, job.cfg.output.parent)
         fd, temporary = tempfile.mkstemp(prefix=".task-index.", dir=str(INDEX_PATH.parent))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(SOURCE_INDEX, stream, ensure_ascii=False)
+                json.dump({**SOURCE_INDEX, key: entry}, stream, ensure_ascii=False)
             os.replace(temporary, INDEX_PATH)
+            SOURCE_INDEX[key] = entry
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
@@ -78,20 +79,56 @@ def _completed_file_unchanged(output: Path, entry: dict) -> bool:
         return False
 
 
-def _restart_job(old: DownloadJob, request: dict | None = None) -> DownloadJob:
+def _enqueue(job: DownloadJob) -> None:
+    try:
+        _remember(job)
+    except OSError as error:
+        raise ValueError("无法保存任务索引，请检查程序目录的写入权限。") from error
+    job.on_finish = lambda: _remember(job)
+    job.start()
+    JOBS[job.id] = job
+
+
+def _video_url(value: str) -> str:
+    if not value or len(value) > 8192 or any(char.isspace() for char in value):
+        raise ValueError("请填写有效的视频地址")
+    parsed = urlparse(value)
+    if parsed.scheme in ("http", "https"):
+        if not parsed.hostname or parsed.port == 0:
+            raise ValueError("视频地址缺少有效的主机或端口")
+    elif not (CFG.get("allow_local_input") and parsed.scheme == "file" and parsed.path):
+        raise ValueError("只支持 http/https 地址（本地文件需在 config.json 开启 allow_local_input）")
+    return value
+
+
+def _restart_job(
+    old: DownloadJob, request: dict | None = None, *, restart: bool = False,
+) -> DownloadJob:
     if old.is_running():
         return old
-    cfg = replace(old.cfg, restart=False, strict_errors=CFG["strict_errors"], hls_workers=CFG["hls_workers"], native_hls=CFG["native_hls"])
+    output = old.cfg.output
+    if _output_in_use(output):
+        raise ValueError("已有任务正在写入同一个文件")
+    if not restart and (output.exists() or output.is_symlink()):
+        raise ValueError("输出文件已存在，移走同名文件后可继续重试。")
+    cfg = replace(old.cfg, restart=restart, strict_errors=CFG["strict_errors"], hls_workers=CFG["hls_workers"], native_hls=CFG["native_hls"])
     if request is not None:
-        cfg = replace(cfg, headers=str(request.get("headers") or ""), proxy=str(request.get("proxy") or ""))
+        url = _video_url(str(request.get("url", cfg.url) or "").strip())
+        headers = str(request.get("headers", cfg.headers) or "")
+        if len(headers) > 16384:
+            raise ValueError("请求头过长")
+        if url != cfg.url and headers.strip() and (
+            not urlparse(url).hostname or not urlparse(cfg.url).hostname or origin(url) != origin(cfg.url)
+        ):
+            raise ValueError("新地址的来源不同。请清除请求头，或作为新任务添加并填写新来源的请求头。")
+        cache = output.with_name(output.name + ".parts")
+        if url != cfg.url and not restart and any(cache.glob("part_*.ts")):
+            raise ValueError("现有分段按原地址生成。请使用原地址继续，或将新地址作为新任务下载。")
+        cfg = replace(cfg, url=url, headers=headers, proxy=str(request.get("proxy", cfg.proxy) or "").strip())
     job = DownloadJob(cfg, old.ffmpeg, old.ffprobe)
     job.id = old.id
     job.logs.extend(old.logs)
-    job._log("继续原任务：复用同一缓存目录，应用当前下载设置")
-    job.on_finish = lambda: _remember(job)
-    JOBS[job.id] = job
-    _remember(job)
-    job.start()
+    _enqueue(job)
     return job
 
 
@@ -149,7 +186,7 @@ def _output_in_use(output: Path) -> bool:
 
 
 def _taken(output: Path) -> bool:
-    if output.exists():
+    if output.exists() or output.is_symlink():
         return True
     if (output.parent / (output.name + ".parts")).exists():
         return True
@@ -189,14 +226,7 @@ def _create_job(
     filename: str = "",
     reserved: set[Path] | None = None,
 ) -> DownloadJob:
-    url = str(url or "").strip()
-    if not url or len(url) > 8192:
-        raise ValueError("请填写有效的视频地址")
-    scheme = urlparse(url).scheme.lower()
-    if scheme not in ("http", "https") and not (
-        CFG.get("allow_local_input") and scheme == "file"
-    ):
-        raise ValueError("只支持 http/https 地址（本地文件需在 config.json 开启 allow_local_input）")
+    url = _video_url(str(url or "").strip())
 
     tools = TOOLS or refresh_tools()
     if tools is None:
@@ -229,7 +259,9 @@ def _create_job(
             if previous is not None:
                 if previous.is_running():
                     return previous
-                if previous.progress.status != "done":
+                if previous.progress.status != "done" and not (
+                    previous.cfg.output.exists() or previous.cfg.output.is_symlink()
+                ):
                     return _restart_job(previous, payload)
                 entry = SOURCE_INDEX.get(_source_key(url, out_dir), {})
                 if _completed_file_unchanged(previous.cfg.output, entry):
@@ -246,7 +278,7 @@ def _create_job(
                     job._set(status="done", percent=100, total_time=entry.get("duration"), out_time=entry.get("duration") or 0, message="此视频已完成，直接使用已有文件")
                     JOBS[job.id] = job
                     return job
-                if known.exists():
+                if known.exists() or known.is_symlink():
                     dedupe = True
                 elif cache.is_dir():
                     reuse_known_cache = True
@@ -261,8 +293,8 @@ def _create_job(
             parts_dir = output.parent / (output.name + ".parts")
             if parts_dir.exists() and not restart and not reuse_known_cache:
                 raise ValueError("此文件名已有来源不明的缓存，请从原任务重试或更换文件名。")
-            if output.exists() and not restart and not parts_dir.is_dir():
-                raise ValueError(f"文件已存在：{output}（可勾选“重新开始”或改文件名）")
+            if not restart and (output.exists() or output.is_symlink()):
+                raise ValueError(f"文件已存在：{output}，请更换文件名。")
 
         job_config = JobConfig(
             url=url,
@@ -280,10 +312,7 @@ def _create_job(
             trusted_header_origins=CFG["trusted_header_origins"],
         )
         job = DownloadJob(job_config, tools.ffmpeg, tools.ffprobe)
-        job.on_finish = lambda: _remember(job)
-        JOBS[job.id] = job
-        _remember(job)
-        job.start()
+        _enqueue(job)
     return job
 
 
@@ -300,6 +329,7 @@ def state(payload: dict | None = None) -> dict:
             "output_dir": CFG.get("output_dir"),
             "port": CFG.get("port"),
             "stall_timeout": CFG.get("stall_timeout"),
+            "allow_local_input": CFG.get("allow_local_input", False),
             **{key: CFG[key] for key in ("max_concurrent", "hls_workers", "strict_errors", "native_hls")},
         },
         "system_proxy": system_proxy.detect(),
@@ -340,44 +370,50 @@ def start_batch(payload: dict) -> dict:
     ):
         raise ValueError("文件名列表需要与视频地址一一对应")
 
-    dedupe = len(urls) > 1
+    numbered = len(urls) > 1
     jobs: list[dict] = []
     errors: list[dict] = []
+    results: list[dict] = []
     reserved: set[Path] = set()
     seen_jobs: set[str] = set()
     seen_urls: set[str] = set()
-    existing_ids = set(JOBS)
+    with LOCK:
+        existing_ids = set(JOBS)
     reused: set[str] = set()
     for index, url in enumerate(urls):
         if url in seen_urls:
+            results.append({"index": index, "status": "duplicate"})
             continue
         seen_urls.add(url)
         try:
             name = filenames[index].strip()
             if not name and filename:
                 name = filename
-                if dedupe:
+                if numbered:
                     base = Path(safe_filename(filename, url))
                     name = f"{base.stem}_{index + 1:02d}{base.suffix}"
             job = _create_job(
                 payload,
                 url,
-                dedupe=dedupe,
+                dedupe=True,
                 filename=name,
                 reserved=reserved,
             )
             reserved.add(job.cfg.output)
-            if job.id in existing_ids or job.progress.status == "done":
+            was_reused = job.id in existing_ids or job.progress.status == "done"
+            if was_reused:
                 reused.add(job.id)
+            results.append({"index": index, "status": "reused" if was_reused else "created", "output": job.cfg.output.name})
             if job.id not in seen_jobs:
                 jobs.append(job.snapshot(include_logs=False))
                 seen_jobs.add(job.id)
         except ValueError as error:
             errors.append({"url": url, "error": str(error)})
+            results.append({"index": index, "status": "failed", "error": str(error)})
 
-    if not jobs:
+    if not jobs and payload.get("include_results") is not True:
         raise ValueError(errors[0]["error"] if errors else "没有创建任何任务")
-    return {"ok": True, "jobs": jobs, "errors": errors, "reused": len(reused)}
+    return {"ok": True, "jobs": jobs, "errors": errors, "reused": len(reused), "results": results}
 
 
 def cancel(payload: dict) -> dict:
@@ -396,18 +432,26 @@ def edit_details(payload: dict) -> dict:
 def retry(payload: dict) -> dict:
     with LOCK:
         old = _get_job(payload)
-        if old.progress.status == "done":
+        restart = payload.get("restart") is True
+        changes = payload.get("changes")
+        if changes is not None and not isinstance(changes, dict):
+            raise ValueError("任务设置无效")
+        if old.is_running():
+            if restart or changes is not None:
+                raise ValueError("任务正在运行，请先取消")
+            return {"ok": True, "job": old.snapshot(include_logs=False)}
+        if old.progress.status == "done" and not restart:
             entry = SOURCE_INDEX.get(_source_key(old.cfg.url, old.cfg.output.parent), {})
             if not _completed_file_unchanged(old.cfg.output, entry):
                 raise ValueError("已完成文件已更改或丢失，请重新添加视频；现有文件不会被覆盖。")
             return {"ok": True, "job": old.snapshot(include_logs=False)}
-        if getattr(old, "headers_missing", False):
+        if getattr(old, "headers_missing", False) and (changes is None or "headers" not in changes):
             raise ValueError("旧版本未保留该任务的请求头，请使用“编辑后重试”补充请求头。")
         if "settings" in payload:
             if not isinstance(payload["settings"], dict):
                 raise ValueError("下载设置无效")
             settings(payload["settings"])
-        job = _restart_job(old)
+        job = _restart_job(old, changes, restart=restart)
         return {"ok": True, "job": job.snapshot(include_logs=False)}
 
 
@@ -423,17 +467,21 @@ def cancel_all(payload: dict | None = None) -> dict:
 
 
 def remove(payload: dict) -> dict:
-    job = _get_job(payload)
-    if job.is_running():
-        raise ValueError("任务正在运行，请先取消")
     with LOCK:
+        job = _get_job(payload)
+        if job.is_running():
+            raise ValueError("任务正在运行，请先取消")
         JOBS.pop(job.id, None)
     return {"ok": True}
 
 
 def clear_finished(payload: dict | None = None) -> dict:
     with LOCK:
-        ids = [job_id for job_id, job in JOBS.items() if not job.is_running()]
+        completed_only = bool(payload and payload.get("completed_only") is True)
+        ids = [
+            job_id for job_id, job in JOBS.items()
+            if not job.is_running() and (not completed_only or job.progress.status == "done")
+        ]
         for job_id in ids:
             JOBS.pop(job_id, None)
     return {"ok": True, "removed": len(ids)}
